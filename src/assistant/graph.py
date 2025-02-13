@@ -4,13 +4,26 @@ from typing_extensions import Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
-from langchain_ollama import ChatOllama
+from langchain.chat_models import ChatOpenAI
 from langgraph.graph import START, END, StateGraph
 
 from assistant.configuration import Configuration, SearchAPI
 from assistant.utils import deduplicate_and_format_sources, tavily_search, format_sources, perplexity_search
 from assistant.state import SummaryState, SummaryStateInput, SummaryStateOutput
 from assistant.prompts import query_writer_instructions, summarizer_instructions, reflection_instructions
+
+
+def extract_json_from_result(content: str):
+    # 从 result.content 中找到最后一个 JSON 字符串，忽略掉前边的内容
+    # 使用正则表达式找到最后一个 JSON 字符串
+    import re
+    json_pattern = re.compile(r'\{[^{}]*\}')
+    json_match = json_pattern.search(content)
+
+    if json_match:
+        return json.loads(json_match.group())
+    else:
+        raise ValueError("No JSON found in the response")
 
 # Nodes   
 def generate_query(state: SummaryState, config: RunnableConfig):
@@ -21,12 +34,14 @@ def generate_query(state: SummaryState, config: RunnableConfig):
 
     # Generate a query
     configurable = Configuration.from_runnable_config(config)
-    llm_json_mode = ChatOllama(model=configurable.local_llm, temperature=0, format="json")
-    result = llm_json_mode.invoke(
+    llm = ChatOpenAI(openai_api_key=configurable.openai_api_key, openai_api_base=configurable.openai_base_url, model_name=configurable.openai_model, temperature=0)
+    result = llm.invoke(
         [SystemMessage(content=query_writer_instructions_formatted),
         HumanMessage(content=f"Generate a query for web search:")]
-    )   
-    query = json.loads(result.content)
+    )
+    # 从 result.content 中找到最后一个 JSON 字符串，忽略掉前边的内容
+    # 使用正则表达式找到最后一个 JSON 字符串
+    query = extract_json_from_result(result.content)
     
     return {"search_query": query['query']}
 
@@ -80,7 +95,7 @@ def summarize_sources(state: SummaryState, config: RunnableConfig):
 
     # Run the LLM
     configurable = Configuration.from_runnable_config(config)
-    llm = ChatOllama(model=configurable.local_llm, temperature=0)
+    llm = ChatOpenAI(openai_api_key=configurable.openai_api_key, openai_api_base=configurable.openai_base_url, model_name=configurable.openai_model, temperature=0)
     result = llm.invoke(
         [SystemMessage(content=summarizer_instructions),
         HumanMessage(content=human_message_content)]
@@ -102,12 +117,13 @@ def reflect_on_summary(state: SummaryState, config: RunnableConfig):
 
     # Generate a query
     configurable = Configuration.from_runnable_config(config)
-    llm_json_mode = ChatOllama(model=configurable.local_llm, temperature=0, format="json")
-    result = llm_json_mode.invoke(
+    llm = ChatOpenAI(openai_api_key=configurable.openai_api_key, openai_api_base=configurable.openai_base_url, model_name=configurable.openai_model, temperature=0)
+    result = llm.invoke(
         [SystemMessage(content=reflection_instructions.format(research_topic=state.research_topic)),
         HumanMessage(content=f"Identify a knowledge gap and generate a follow-up web search query based on our existing knowledge: {state.running_summary}")]
     )   
-    follow_up_query = json.loads(result.content)
+    
+    follow_up_query = extract_json_from_result(result.content)
 
     # Get the follow-up query
     query = follow_up_query.get('follow_up_query')

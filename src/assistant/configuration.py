@@ -15,8 +15,10 @@ class SearchAPI(Enum):
 class Configuration:
     """The configurable fields for the research assistant."""
     max_web_research_loops: int = 3
-    local_llm: str = "llama3.2"
     search_api: SearchAPI = SearchAPI.TAVILY  # Default to TAVILY
+    openai_base_url: Optional[str] = None
+    openai_api_key: Optional[str] = None
+    openai_model: Optional[str] = None
 
     @classmethod
     def from_runnable_config(
